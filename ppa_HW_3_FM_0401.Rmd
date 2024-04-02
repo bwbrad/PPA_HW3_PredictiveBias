@@ -54,7 +54,7 @@ street_posts <- st_read("https://mapping-phoenix.opendata.arcgis.com/api/downloa
   dplyr::select(OBJECTID) %>% 
   st_transform('ESRI:103223')
 
-police_grid <- st_read("/Users/francesmurray/Desktop/PPA/Police_Grid.geojson") %>% 
+police_grid <- st_read("https://mapping-phoenix.opendata.arcgis.com/api/download/v1/items/5bdb7c621a6449bfb6e190e4c09a6636/geojson?layers=0") %>% 
   st_transform(st_crs(street_posts))
 
 phx <- st_union(police_grid) %>% 
@@ -73,6 +73,13 @@ names(crime_data) <- gsub(x = names(crime_data), pattern = " ", replacement = "_
 car_theft_22 <- crime_data %>% 
   filter(UCR_CRIME_CATEGORY == "MOTOR VEHICLE THEFT" &
     grepl("2022" , OCCURRED_ON)) 
+
+#select for drug offense and year 2022
+drug_off_2022 <- crime_data %>% 
+  filter(UCR_CRIME_CATEGORY == "DRUG OFFENSE" &
+    grepl("2022" , OCCURRED_ON)) 
+ 
+
 
 ```
 
@@ -110,6 +117,13 @@ car_theft_22_grid <- car_theft_22 %>%
   group_by(GRID) %>% 
   summarise(n_car_theft = n()) 
 
+#summarize drug offense by police grid
+
+drug_off_22_grid <- drug_off_2022 %>% 
+  dplyr::select(c(INC_NUMBER, GRID)) %>% 
+  group_by(GRID) %>% 
+  summarise(n_drug_off = n()) 
+
 #Join car theft to grid 
 
 police_grid_count <- police_grid %>% 
@@ -117,6 +131,8 @@ police_grid_count <- police_grid %>%
   left_join(car_theft_22_grid, join_by("GRID_NUMBER" == "GRID")) %>% 
   mutate(n_car_theft = if_else(is.na(n_car_theft), 0, n_car_theft)) %>% 
   left_join(police_grid) %>% 
+  left_join(drug_off_22_grid, join_by("GRID_NUMBER" == "GRID")) %>%
+  replace(is.na(.), 0) %>% 
   st_as_sf()
 
 
@@ -126,7 +142,9 @@ tmap_mode("plot")
 
 tm_shape(police_grid_count)+ 
   tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 8, title = "Number of car thefts in 2022")+ 
-  tm_layout(main.title = "Car Theft by Police Grid in Phoenix")
+  tm_layout(main.title = "Car Theft by Police Grid in Phoenix")+ 
+  tm_shape(phx)+ 
+  tm_borders()
 
 
 ```
@@ -149,11 +167,9 @@ tm_shape(street_posts_count) +
           palette = "Reds", 
           style = "jenks", 
           n = 8,
-          title = "number of street lamps per police grid")
-
-
-
-
+          title = "number of street lamps per police grid")+ 
+  tm_shape(phx)+ 
+  tm_borders()
 
 ```
 
@@ -176,13 +192,20 @@ street_posts_grid <- police_grid_count %>%  # Start with the summarized variable
 ```
 
 
-```{r final_net}
+```{r extra data for final net}
 
 phx_villages <- st_read("https://maps.phoenix.gov/pub/rest/services/Public/Villages/MapServer/0/query?outFields=*&where=1%3D1&f=geojson") %>% 
   st_transform(st_crs(street_posts))
 
 police_districts <- st_read("https://maps.phoenix.gov/pub/rest/services/Public/PolicePrecincts/MapServer/0/query?outFields=*&where=1%3D1&f=geojson") %>% 
   st_transform(st_crs(street_posts))
+
+
+
+
+```
+
+```{r final net}
 
 final_net <-
   st_centroid(street_posts_grid) %>%
@@ -198,7 +221,8 @@ final_net <-
          "PRECINCT" = NAME.y) %>% 
   st_join(street_posts_count %>% 
               dplyr::select(count_posts)) %>% 
-  na.omit()
+  na.omit() 
+  
 ```
 
 ```{r vizNN}
@@ -284,7 +308,6 @@ for(i in vars){
 
 do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Streetlamps"))
 
-?scale_fill_viridis
 ```
 
 ## Distance to Hot spot
@@ -327,15 +350,15 @@ Leave One Group Out CV on spatial features
 # View(crossValidate)
 
 ## define the variables we want
-reg.ss.vars <- c("street_posts.nn", "lamp.isSig.dist")
+reg.ss.vars <- c("street_posts.nn", "lamp.isSig.dist", "n_drug_off")
 
 ## RUN REGRESSIONS
 reg.ss.spatialCV <- crossValidate(
   dataset = final_net,
-  id = "GRID_NUMBER",                           
+  id = "VILLAGE",                           
   dependentVariable = "n_car_theft",
   indVariables = reg.ss.vars) %>%
-    dplyr::select(cvID = GRID_NUMBER, n_car_theft, Prediction, geometry)
+    dplyr::select(cvID = VILLAGE, n_car_theft, Prediction, geometry)
 ```
 
 ```{r}
@@ -376,7 +399,7 @@ Note that the code here is *different* than in the book - it has been updated to
 
 
 ```{r}
-theft_sf <- st_as_sf(final_net). #I don't know if this line is necessary
+theft_sf <- st_as_sf(final_net) 
 
 # demo of kernel width
 theft_ppp <- as.ppp(st_coordinates(theft_sf), W = st_bbox(final_net))
@@ -407,9 +430,9 @@ as.data.frame(theft_KD.1000) %>%
    ggplot() +
      geom_sf(aes(fill=value),
              color = NA) +
-     geom_sf(data = sample_n(theft_s, 1500), size = .1, col = "white", alpha = 0.5) +
+     geom_sf(data = sample_n(theft_sf, 1500), size = .1, col = "white", alpha = 0.5) +
      scale_fill_viridis(name = "Density") +
-     labs(title = "Kernel density of lamp posts") +
+     labs(title = "Kernel density of car thefts") +
      mapTheme(title_size = 14)
 ```
 
@@ -453,7 +476,7 @@ theft_KDE_sf <- theft_KDE_sum %>%
   dplyr::select(label, Risk_Category, n_theft)
 ```
 
-Note that this is different from the book, where we pull a model out of a list of models we've created. For your homework, you'll be creating multiple models.
+
 
 ```{r}
 ml_breaks <- classIntervals(reg.ss.spatialCV$Prediction, 
@@ -505,7 +528,7 @@ rbind(theft_KDE_sf, theft_risk_sf) %>%
     ggplot(aes(Risk_Category,Pcnt_of_test_set_crimes)) +
       geom_bar(aes(fill=label), position="dodge", stat="identity") +
       scale_fill_viridis(discrete = TRUE, name = "Model") +
-      labs(title = "Risk prediction vs. Kernel density, 2024 Car Thefts",
+      labs(title = "Risk prediction vs. Kernel density, 2023 Car Thefts",
            y = "% of Test Set Car Thefts (per model)",
            x = "Risk Category") +
   theme_bw() +
