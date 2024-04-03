@@ -223,31 +223,87 @@ vars_net.long.nn <-
 
 ```{r}
 
-ggplot() +
-      geom_sf(data = vars_net.long.nn, aes(fill=value), colour=NA) +
-      scale_fill_viridis(name="NN Distance") +
-      labs(title="Street Lamp NN Distance") +
-      theme_void()
+vars_net.long.nn <- vars_net.long.nn %>% 
+  mutate(log_val = log(value))
 
-tm_shape(vars_net.long.nn)+ 
-  tm_fill("value", 
-          palette = "Viridis", 
-          n= 8)
+tm <- tm_shape(vars_net.long.nn)+ 
+  tm_fill("log_val", 
+          palette = "Spectral", 
+          n= 8)+ 
+  tm_shape(phx)+ 
+  tm_borders()+   
+  tm_layout(legend.outside = TRUE, 
+            main.title = "Log Street Lamp NN")
 
-tm_shape(street_posts_count) + 
+
+tm1 <- tm_shape(street_posts_count) + 
   tm_fill("count_posts", 
           palette = "Reds", 
           style = "jenks", 
-          n = 8,
-          title = "number of street lamps per police grid")+ 
+          n = 7)+ 
   tm_shape(phx)+ 
-  tm_borders()
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Street Lamps")
 
-tm_shape(police_grid_count)+ 
-  tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 8, title = "Number of car thefts in 2022")+ 
-  tm_layout(main.title = "Car Theft by Police Grid in Phoenix")+ 
+
+tm2 <- tm_shape(police_grid_count)+ 
+  tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 7)+ 
   tm_shape(phx)+ 
-  tm_borders()
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Drug Offense")
+
+
+tmap_arrange(tm, tm1, tm2)
+
+```
+
+## Small multiple scatterplot with correlations
+
+```{r}
+
+corr_plots <- final_net %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(GRID_NUMBER, n_car_theft, n_drug_off, street_posts.nn, count_posts) %>% 
+  pivot_longer(cols= c(n_drug_off, street_posts.nn, count_posts),
+               names_to = "metric", 
+               values_to = "value") %>% 
+  mutate(metric = recode(metric, "count_posts" = "Number of Street Lamps", 
+                         "n_drug_off" = "Number of Drug Offenses", 
+                         "street_posts.nn" = "Lamp Post NN"))
+ 
+
+ggplot(corr_plots, 
+       aes(x= n_car_theft, 
+           y= value, 
+           color = metric))+ 
+  geom_point(size = .5)+ 
+  facet_wrap(~metric)+ 
+  scale_y_log10()+ 
+  scale_x_continuous(limits = c(0, 40))+
+  geom_smooth()+ 
+  labs(x= "Number of car thefts")
+
+?pivot_longer()
+```
+
+
+## Histogram of dependent variable
+
+```{r}
+
+library(scales)
+
+ggplot(final_net, 
+       aes(x= n_car_theft))+
+  geom_histogram(fill = "turquoise", col = "white")+ 
+  xlim(0, 30)+ 
+  labs( x = "Number of car thefts", 
+        y= "Count", 
+        title = "Histogram of Phoenix car thefts in 2022, by grid")+ 
+  scale_y_continuous(labels = label_comma(), 
+                     limits = c(0,2500)) 
 
 ```
 
