@@ -64,20 +64,20 @@ phx <- st_union(police_grid) %>%
 library(data.table)
 
 #load crime data
-crime_data <- fread("https://www.phoenixopendata.com/dataset/cc08aace-9ca9-467f-b6c1-f0879ab1a358/resource/0ce3411a-2fc6-4302-a33f-167f68608a20/download/crime-data_crime-data_crimestat.csv") 
+crime_data <- read.csv("crime-data_crime-data_crimestat.csv")
 
 #get rid of space in column names
 names(crime_data) <- gsub(x = names(crime_data), pattern = " ", replacement = "_")
 
 #select for car theft and year 2022
 car_theft_22 <- crime_data %>% 
-  filter(UCR_CRIME_CATEGORY == "MOTOR VEHICLE THEFT" &
-    grepl("2022" , OCCURRED_ON)) 
+  filter(UCR.CRIME.CATEGORY == "MOTOR VEHICLE THEFT" &
+    grepl("2022" , OCCURRED.ON)) 
 
 #select for drug offense and year 2022
 drug_off_2022 <- crime_data %>% 
-  filter(UCR_CRIME_CATEGORY == "DRUG OFFENSE" &
-    grepl("2022" , OCCURRED_ON)) 
+  filter(UCR.CRIME.CATEGORY == "DRUG OFFENSE" &
+    grepl("2022" , OCCURRED.ON)) 
  
 
 
@@ -91,8 +91,15 @@ Plotting point data and density
 
 > Are there other geometries useful to represent point locations?
 
-```{r fig.width=6, fig.height=4, results='markup'}
+```{r  fig.height=11, results='markup'}
 
+# Street lights
+
+tm_shape(phx)+ 
+  tm_borders()+ 
+  tm_shape(street_posts)+ 
+  tm_dots(size = .005)+ 
+  tm_layout (main.title = "Distribution of streetlamps in Phoenix")
 
 # Plot 2: Density of street lamps with contours overlaid on Phoenix boundary
 ggplot() + 
@@ -113,14 +120,14 @@ ggplot() +
 #summarize car theft by police grid
 
 car_theft_22_grid <- car_theft_22 %>% 
-  dplyr::select(c(INC_NUMBER, GRID)) %>% 
+  dplyr::select(c(INC.NUMBER, GRID)) %>% 
   group_by(GRID) %>% 
   summarise(n_car_theft = n()) 
 
 #summarize drug offense by police grid
 
 drug_off_22_grid <- drug_off_2022 %>% 
-  dplyr::select(c(INC_NUMBER, GRID)) %>% 
+  dplyr::select(c(INC.NUMBER, GRID)) %>% 
   group_by(GRID) %>% 
   summarise(n_drug_off = n()) 
 
@@ -199,10 +206,6 @@ phx_villages <- st_read("https://maps.phoenix.gov/pub/rest/services/Public/Villa
 
 police_districts <- st_read("https://maps.phoenix.gov/pub/rest/services/Public/PolicePrecincts/MapServer/0/query?outFields=*&where=1%3D1&f=geojson") %>% 
   st_transform(st_crs(street_posts))
-
-
-
-
 ```
 
 ```{r final net}
@@ -350,7 +353,7 @@ Leave One Group Out CV on spatial features
 # View(crossValidate)
 
 ## define the variables we want
-reg.ss.vars <- c("street_posts.nn", "lamp.isSig.dist", "n_drug_off")
+reg.ss.vars <- c("street_posts.nn", "lamp.isSig.dist")
 
 ## RUN REGRESSIONS
 reg.ss.spatialCV <- crossValidate(
@@ -359,23 +362,53 @@ reg.ss.spatialCV <- crossValidate(
   dependentVariable = "n_car_theft",
   indVariables = reg.ss.vars) %>%
     dplyr::select(cvID = VILLAGE, n_car_theft, Prediction, geometry)
+
+
+## define the variables we want
+reg.ss.vars2 <- c("street_posts.nn", "lamp.isSig.dist", "n_drug_off")
+
+## RUN REGRESSIONS
+reg.ss.spatialCV2 <- crossValidate(
+  dataset = final_net,
+  id = "VILLAGE",                           
+  dependentVariable = "n_car_theft",
+  indVariables = reg.ss.vars2) %>%
+    dplyr::select(cvID = VILLAGE, n_car_theft, Prediction, geometry)
+
+
+
 ```
 
 ```{r}
-# calculate errors by GRID
+# calculate errors by Village
 
 error_by_reg_and_fold <- 
   reg.ss.spatialCV %>%
+    group_by(cvID)  %>% 
+    summarize(Mean_Error = mean(Prediction - n_car_theft, na.rm = T),
+              MAE = mean(abs(Mean_Error), na.rm = T),
+              SD_MAE = mean(abs(Mean_Error), na.rm = T)) %>%
+  ungroup() %>% 
+  mutate(reg = "Regression 1")
+
+error_by_reg_and_fold2 <- 
+  reg.ss.spatialCV2 %>%
     group_by(cvID) %>% 
     summarize(Mean_Error = mean(Prediction - n_car_theft, na.rm = T),
               MAE = mean(abs(Mean_Error), na.rm = T),
               SD_MAE = mean(abs(Mean_Error), na.rm = T)) %>%
-  ungroup()
+  ungroup() %>% 
+  mutate(reg = "Regression 2")
 
-error_by_reg_and_fold %>% 
+errors_combined <- rbind(error_by_reg_and_fold, error_by_reg_and_fold2)
+
+errors_combined %>% 
   arrange(desc(MAE))
-error_by_reg_and_fold %>% 
+errors_combined %>% 
   arrange(MAE)
+
+errors_table <- errors_combined %>% 
+  st_drop_geometry()
 
 ## plot histogram of OOF (out of fold) errors
 error_by_reg_and_fold %>%
@@ -385,10 +418,11 @@ error_by_reg_and_fold %>%
     labs(title="Distribution of MAE", subtitle = "LOGO-CV",
          x="Mean Absolute Error", y="Count") 
 
-tm_shape(error_by_reg_and_fold)+ 
+tm_shape(errors_combined)+ 
   tm_polygons(fill = "Mean_Error", 
-              palette = "-Reds",
-              lwd = 0)
+              palette = "RdYlGn",
+              lwd = 0, n= 8)+ 
+    tm_facets(by = "reg")
 ```
 
 ## Density vs predictions
@@ -430,7 +464,7 @@ as.data.frame(theft_KD.1000) %>%
    ggplot() +
      geom_sf(aes(fill=value),
              color = NA) +
-     geom_sf(data = sample_n(theft_sf, 1500), size = .1, col = "white", alpha = 0.5) +
+     geom_sf(data = sample_n(street_posts, 1500), size = .1, col = "white", alpha = 0.5) +
      scale_fill_viridis(name = "Density") +
      labs(title = "Kernel density of car thefts") +
      mapTheme(title_size = 14)
@@ -442,8 +476,8 @@ Let's see how our model performed relative to KD on the following year's data.
 
 ```{r car_theft_23}
 car_theft_23 <- crime_data %>% 
-  filter(UCR_CRIME_CATEGORY == "MOTOR VEHICLE THEFT" &
-           grepl("2023", OCCURRED_ON)) %>% 
+  filter(UCR.CRIME.CATEGORY == "MOTOR VEHICLE THEFT" &
+           grepl("2023", OCCURRED.ON)) %>% 
   left_join(police_grid %>% 
               dplyr::select(-OBJECTID),
             by= c("GRID" = "GRID_NUMBER")) %>% 
@@ -507,7 +541,7 @@ rbind(theft_KDE_sf, theft_risk_sf) %>%
   gather(Variable, Value, -label, -Risk_Category, -geometry) %>%
   ggplot() +
     geom_sf(aes(fill = Risk_Category), colour = NA) +
-    geom_sf(data = sample_n(car_theft_23, 3000), size = .5, colour = "black") +
+    geom_sf(data = sample_n(street_posts, 3000), size = .5, colour = "white", alpha = .5) +
     facet_wrap(~label, ) +
     scale_fill_viridis(discrete = TRUE) +
     labs(title="Comparison of Kernel Density and Risk Predictions",
@@ -537,14 +571,14 @@ rbind(theft_KDE_sf, theft_risk_sf) %>%
 
 ## Appendix? 
 
-```{r map of street lamps in dot form}
+```{r map of street lamps in dot form, fig.height=11}
 
 # Street lights
 
 tm_shape(phx)+ 
   tm_borders()+ 
   tm_shape(street_posts)+ 
-  tm_dots(size = .05)+ 
+  tm_dots(size = .005)+ 
   tm_layout (main.title = "Distribution of streetlamps in Phoenix")
 
 
