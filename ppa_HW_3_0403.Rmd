@@ -35,6 +35,7 @@ library(tidycensus)
 library(classInt) 
 library(tmap)
 library(gt)
+library(gtExtras)
 # for KDE and ML risk class intervals
 # functions
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
@@ -97,7 +98,7 @@ Plotting point data and density
 tm_shape(phx)+ 
   tm_borders()+ 
   tm_shape(street_posts)+ 
-  tm_dots(size = .005)+ 
+  tm_dots(size = .0001)+ 
   tm_layout (main.title = "Distribution of streetlamps in Phoenix")
 
 # Plot 2: Density of street lamps with contours overlaid on Phoenix boundary
@@ -158,6 +159,16 @@ street_posts_count <- street_posts %>%
   mutate(count_posts = 1) %>% 
   aggregate(.,police_grid, sum)  %>% 
   mutate(count_posts = replace_na(count_posts, 0)) 
+
+tm_shape(street_posts_count) + 
+  tm_fill("count_posts", 
+          palette = "Reds", 
+          style = "jenks", 
+          n = 7)+ 
+  tm_shape(phx)+ 
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Street Lamps")
 
 
 
@@ -222,31 +233,75 @@ vars_net.long.nn <-
 
 ```{r}
 
-ggplot() +
-      geom_sf(data = vars_net.long.nn, aes(fill=value), colour=NA) +
-      scale_fill_viridis(name="NN Distance") +
-      labs(title="Street Lamp NN Distance") +
-      theme_void()
+vars_net.long.nn <- vars_net.long.nn %>% 
+  mutate(log_val = log(value))
 
-tm_shape(vars_net.long.nn)+ 
-  tm_fill("value", 
-          palette = "Viridis", 
-          n= 8)
-
-tm_shape(street_posts_count) + 
-  tm_fill("count_posts", 
-          palette = "Reds", 
-          style = "jenks", 
-          n = 8,
-          title = "number of street lamps per police grid")+ 
+tm <- tm_shape(vars_net.long.nn)+ 
+  tm_fill("log_val", 
+          palette = "Spectral", 
+          n= 8)+ 
   tm_shape(phx)+ 
-  tm_borders()
+  tm_borders()+   
+  tm_layout(legend.outside = TRUE, 
+            main.title = "Log Street Lamp NN")
 
-tm_shape(police_grid_count)+ 
-  tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 8, title = "Number of car thefts in 2022")+ 
-  tm_layout(main.title = "Car Theft by Police Grid in Phoenix")+ 
+
+tm2 <- tm_shape(police_grid_count)+ 
+  tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 7)+ 
   tm_shape(phx)+ 
-  tm_borders()
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Drug Offense")
+
+
+tmap_arrange(tm, tm2)
+
+```
+
+## Small multiple scatterplot with correlations
+
+```{r fig.width = 10}
+
+corr_plots <- final_net %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(GRID_NUMBER, n_car_theft, n_drug_off, street_posts.nn, count_posts) %>% 
+  pivot_longer(cols= c(n_drug_off, street_posts.nn, count_posts),
+               names_to = "metric", 
+               values_to = "value") %>% 
+  mutate(metric = recode(metric, "count_posts" = "Street Lamps per Grid Cell", 
+                         "n_drug_off" = "Drug Offenses per Grid Cell", 
+                         "street_posts.nn" = "Lamp Post NN distance (ft)"))
+ 
+
+ggplot(corr_plots, 
+       aes(x= n_car_theft, 
+           y= value, 
+           color = metric))+ 
+  geom_point(size = .5)+ 
+  facet_wrap(~metric, scales = "free")+ 
+  scale_y_log10()+ 
+  geom_smooth(color = "black", lwd = .5)+ 
+  labs(x= "Number of car thefts")
+
+?pivot_longer()
+```
+
+
+## Histogram of dependent variable
+
+```{r}
+
+library(scales)
+
+ggplot(final_net, 
+       aes(x= n_car_theft))+
+  geom_histogram(fill = "turquoise", col = "white")+ 
+  xlim(0, 30)+ 
+  labs( x = "Number of car thefts", 
+        y= "Count", 
+        title = "Histogram of Phoenix car thefts in 2022, by grid")+ 
+  scale_y_continuous(labels = label_comma(), 
+                     limits = c(0,2500)) 
 
 ```
 
@@ -389,7 +444,7 @@ reg.ss.spatialCV2 <- crossValidate(
 
 ```
 
-```{r}
+```{r fig.width = 8, results='markup'}
 # calculate errors by Village
 
 error_by_reg_and_fold <- 
@@ -420,7 +475,38 @@ errors_combined %>%
   arrange(MAE)
 
 errors_table <- errors_combined %>% 
-  st_drop_geometry()
+  st_drop_geometry() %>% 
+  pivot_wider(names_from = "reg", 
+              values_from = c("Mean_Error", "MAE", "SD_MAE"))
+
+?pivot_wider
+
+##Table
+
+errors_table %>% 
+  gt() %>% 
+  tab_spanner(columns = 2:3, 
+              label = "Mean Error") %>% 
+  tab_spanner(columns = 4:5, 
+              label = "Mean Abs. Error") %>% 
+  tab_spanner(columns = 6:7, 
+              label = "Std. Dev. Mean Abs. Error") %>% 
+  cols_label("cvID" = "Village",
+             "Mean_Error_Regression 1" = "Reg.1", 
+             "Mean_Error_Regression 2" = "Reg. 2", 
+             "MAE_Regression 1" = "Reg. 1", 
+             "MAE_Regression 2" = "Reg. 2", 
+             "SD_MAE_Regression 1" = "Reg. 1", 
+             "SD_MAE_Regression 2" = "Reg. 2") %>% 
+  fmt_number(columns = 2:7, 
+              decimals = 2) %>% 
+    cols_width(2:7 ~ px(100)) %>% 
+  opt_stylize(style = 6, color = "gray") %>% 
+  gt_theme_538()
+
+```
+
+```{r plot and map of errors, results='markup'}
 
 ## plot histogram of OOF (out of fold) errors
 error_by_reg_and_fold %>%
@@ -434,7 +520,9 @@ tm_shape(errors_combined)+
   tm_polygons(fill = "Mean_Error", 
               palette = "RdYlGn",
               lwd = 0, n= 8)+ 
-    tm_facets(by = "reg")
+    tm_facets(by = "reg") + 
+  tm_layout(legend.outside = TRUE, 
+            legend.outside.position	 = "right")
 ```
 
 ### Disparities of prediction errors by race
@@ -560,7 +648,6 @@ car_theft_23 <- crime_data %>%
   st_transform(st_crs(street_posts))
 ```
 
-# Stoppped here. Not sure how to get the next chunk to work. Not sure I understand kernel density too. 
 
 
 ```{r}
