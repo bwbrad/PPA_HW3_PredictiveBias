@@ -17,9 +17,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE, warning = FALS
 ```
 
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
-
+```{r, include=FALSE}
 library(dplyr)
 library(tidyverse)
 library(sf)
@@ -36,6 +34,7 @@ library(kableExtra)
 library(tidycensus)
 library(classInt) 
 library(tmap)
+library(gt)
 # for KDE and ML risk class intervals
 # functions
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
@@ -395,20 +394,22 @@ reg.ss.spatialCV2 <- crossValidate(
 
 error_by_reg_and_fold <- 
   reg.ss.spatialCV %>%
+  mutate(Error = Prediction - n_car_theft) %>% 
     group_by(cvID)  %>% 
-    summarize(Mean_Error = mean(Prediction - n_car_theft, na.rm = T),
+    summarize(Mean_Error = mean(Error, na.rm = T),
               MAE = mean(abs(Mean_Error), na.rm = T),
-              SD_MAE = mean(abs(Mean_Error), na.rm = T)) %>%
+              SD_MAE = sd(Error, na.rm = T)) %>%
   ungroup() %>% 
   mutate(reg = "Regression 1")
 
 error_by_reg_and_fold2 <- 
   reg.ss.spatialCV2 %>%
-    group_by(cvID) %>% 
-    summarize(Mean_Error = mean(Prediction - n_car_theft, na.rm = T),
+  mutate(Error = Prediction - n_car_theft) %>% 
+    group_by(cvID)  %>% 
+    summarize(Mean_Error = mean(Error, na.rm = T),
               MAE = mean(abs(Mean_Error), na.rm = T),
-              SD_MAE = mean(abs(Mean_Error), na.rm = T)) %>%
-  ungroup() %>% 
+              SD_MAE = sd(Error, na.rm = T)) %>%
+  ungroup() %>%  
   mutate(reg = "Regression 2")
 
 errors_combined <- rbind(error_by_reg_and_fold, error_by_reg_and_fold2)
@@ -435,6 +436,69 @@ tm_shape(errors_combined)+
               lwd = 0, n= 8)+ 
     tm_facets(by = "reg")
 ```
+
+### Disparities of prediction errors by race
+
+```{r}
+acs_vars <- c(total_pop = "B02001_001",
+              white = "B02001_002",
+              black = "B02001_003",
+              hisp_lat = "B03001_003")
+
+acs22 <- get_acs(geography = "tract",
+                 state = "AZ",
+                 county = "Maricopa",
+                 variables = acs_vars,
+                 year = 2022,
+                 output = "wide",
+                 geometry = TRUE) %>% 
+  st_transform(st_crs(street_posts)) %>%
+  st_intersection(phx) %>% 
+  dplyr::select(-ends_with("M")) %>% 
+  rename_with(~ substr(., 1, nchar(.) - 1), all_of(ends_with("E"))) %>% 
+  mutate(pct_white = white / total_pop,
+         pct_black = black / total_pop,
+         pct_hisp_lat = hisp_lat / total_pop,
+         more_white = case_when(pct_white > mean(pct_white, na.rm = T) ~ "Yes",
+                                pct_white < mean(pct_white, na.rm = T) ~ "No"),
+         more_black = case_when(pct_black > mean(pct_black, na.rm = T) ~ "Yes",
+                                pct_black < mean(pct_black, na.rm = T) ~ "No"),
+         more_hisp_lat = case_when(pct_hisp_lat > mean(pct_hisp_lat, na.rm = T) ~ "Yes",
+                                   pct_hisp_lat < mean(pct_hisp_lat, na.rm = T) ~ "No")) %>%
+  dplyr::select(-c(white, black, hisp_lat))
+
+errors_by_demographics <- errors_combined %>% 
+  st_join(acs22 %>%
+            dplyr::select(more_white, more_black, more_hisp_lat)) %>%
+  st_drop_geometry() %>% 
+  group_by(reg, more_white, more_black, more_hisp_lat) %>% 
+  summarize(MAE = mean(abs(Mean_Error), na.rm = T),
+            SD_MAE = mean(SD_MAE, na.rm = T)) %>% 
+  ungroup()
+```
+
+```{r}
+gt(errors_by_demographics %>% 
+     filter(!is.na(more_white))) %>%
+  fmt_number(columns = c(MAE, SD_MAE), decimals = 2) %>% 
+  cols_label(more_white = "Greater % White",
+             more_black = "Greater % Black",
+             more_hisp_lat = "Greater % Hisp/Lat",
+             MAE = "Mean",
+             SD_MAE = "Standard Deviation") %>% 
+  tab_row_group(label = md("**Regression 1**"),
+                rows = reg == "Regression 1") %>% 
+  tab_row_group(label = md("**Regression 2**"),
+                rows = reg == "Regression 2") %>%
+  row_group_order(groups = c(md("**Regression 1**"), md("**Regression 2**"))) %>% 
+  tab_spanner(label = md("**Census tract relative to Phoenix**"),
+                columns = 2:4) %>% 
+  tab_spanner(label = md("**Prediction error**"),
+                columns = 5:6) %>% 
+  cols_hide(reg)
+  
+```
+
 
 ## Density vs predictions
 
