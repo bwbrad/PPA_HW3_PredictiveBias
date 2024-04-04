@@ -82,14 +82,14 @@ drug_off_2022 <- crime_data %>%
 
 
 ```
+## Street lamps in Phoenix:
+*How do basic features in our built environment interact with crime?*
 
-## visualizing point data
+### 1. Mapping street lamps
 
-Plotting point data and density
+The City of Phoenix hosts a comprehensive data set that maps out the location of its over 100,000 street lamps. This is a powerful data set that indirectly shows where the City values nighttime illumination on its streets. Street lamps can serve many purposes, including for illuminating roadways and sidewalks or for providing a sense of safety on public streets. In short, street lamps are located in places where the city has prioritized infrastructure for 24-hour use. 
 
-> How do we analyze point data?
-
-> Are there other geometries useful to represent point locations?
+We map Phoenix's street lamps two ways, first as a point for every lamp,and then as a heatmap. There are so many streetlamps that showing them only as dots makes it difficult to assess the density of their distribution. However, as a heat map, it is clear that streetlamps are distributed densely in Downtown Phoenix, with wide coverage on adjacent streets. By comparison, on the fringe of the Downtown core, streetlamps line only major roads and arterials, leaving corridors of illumination surrounded by swaths of on lit area. 
 
 ```{r  fig.height=11, results='markup'}
 
@@ -114,8 +114,17 @@ ggplot() +
 
 
 ```
+### 2. Examining the distribution of car theft 
 
-```{r results='markup', fig.width=6, fig.height=4}
+In this report, we aim to assess the relationship between the presence of street lamps and other forms of crime or unwanted behavior. This question gets at what can be termed environmental determinants of crime, or what factors in the built environment affect unwanted behavior in cities. 
+
+This analysis considers what the effect of streetlight placement is on car theft in Phoenix. The two factors may be related in multiple ways, including that areas which are well illuminated may make the less suitable for car theft, or that the political implications of street lamps placement may also have a positive or negative relationship with the likelihood of car theft in the area. 
+
+Unlike with street lamps, our data for car theft is aggregated at "police grid" fishnet level, so we don't have the exact location of car thefts. However, we are confident that the small scale of the police gird (over 2,400 cells for the City of Phoenix) allows us to generalize by cell. 
+
+See a map of car theft by grid cell below. Notice how the distribution of car theft is somewhat similar to the distribution of street lamps, however the areas with the highest number of car thefts are just outside of dowtown, both in the neighbrohoods of Maryvale to the east of Downtown, and Alhambra to the north. 
+
+```{r, results='markup', fig.width=6, fig.height=4 }
 
 #summarize car theft by police grid
 
@@ -142,42 +151,35 @@ police_grid_count <- police_grid %>%
   replace(is.na(.), 0) %>% 
   st_as_sf()
 
-
+tm_shape(police_grid_count)+ 
+  tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 7)+ 
+  tm_shape(phx)+ 
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Car Theft")
 
 
 
 ```
 
 
-### Aggregate street lamps to the police grid
 
-```{r spatialjoin}
-## add a value of 1 to each crime, sum them with aggregate
 
+### 3. Assessing other risk factors
+
+To accompany our street lamp and car theft data, we assembled three other data points. Two are derived from street lamps data, and include the number of street lamps per grid cell and the nearest neighbor distant to 10 street lamps from the centroid of gird cells. The third data the measure of drug offenses recorded in each grid cell. This is another version of a metric that can show relationships between the built environment and crime, but is highly susceptible to bias due to the prejudiced nature of policing and the uneven criminalization of drug use across socioeconomic classes. 
+
+```{r knn}
+
+# Aggregate street lamps to the police grid
 street_posts_count <- street_posts %>% 
   dplyr::select(OBJECTID) %>% 
   mutate(count_posts = 1) %>% 
   aggregate(.,police_grid, sum)  %>% 
   mutate(count_posts = replace_na(count_posts, 0)) 
 
-tm_shape(street_posts_count) + 
-  tm_fill("count_posts", 
-          palette = "Reds", 
-          style = "jenks", 
-          n = 7)+ 
-  tm_shape(phx)+ 
-  tm_borders()+ 
-    tm_layout(legend.outside = TRUE, 
-              main.title = "Count Street Lamps")
 
 
-
-```
-
-## Nearest Neighbor Feature
-
-
-```{r knn}
 # Convenience aliases to reduce the length of function names
 st_c    <- st_coordinates  # Alias for st_coordinates function
 st_coid <- st_centroid     # Alias for st_centroid function
@@ -229,15 +231,15 @@ vars_net.long.nn <-
     gather(Variable, value, -geometry)
 
 ```
-#small multiple of risk factors in the fishnet 
 
-```{r}
+```{r , results='markup', fig.height=4, fig.width=6}
 
 vars_net.long.nn <- vars_net.long.nn %>% 
   mutate(log_val = log(value))
 
-tm <- tm_shape(vars_net.long.nn)+ 
-  tm_fill("log_val", 
+ tm_shape(vars_net.long.nn)+ 
+  tm_fill("value", 
+          style = "log10",
           palette = "Spectral", 
           n= 8)+ 
   tm_shape(phx)+ 
@@ -246,19 +248,49 @@ tm <- tm_shape(vars_net.long.nn)+
             main.title = "Log Street Lamp NN")
 
 
-tm2 <- tm_shape(police_grid_count)+ 
-  tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 7)+ 
+ tm_shape(final_net) + 
+  tm_fill("count_posts", 
+          palette = "Reds", 
+          style = "jenks", 
+          n = 7)+ 
+  tm_shape(phx)+ 
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Street Lamps")
+
+ tm_shape(final_net) + 
+  tm_fill("n_drug_off", 
+          palette = "Greens",
+          style = "fisher",
+          n = 7)+ 
   tm_shape(phx)+ 
   tm_borders()+ 
     tm_layout(legend.outside = TRUE, 
               main.title = "Count Drug Offense")
 
 
-tmap_arrange(tm, tm2)
+```
+
+### 4. The distribution of car theft rates
+
+```{r}
+
+library(scales)
+
+ggplot(final_net, 
+       aes(x= n_car_theft))+
+  geom_histogram(fill = "turquoise", col = "white")+ 
+  xlim(0, 30)+ 
+  labs( x = "Number of car thefts", 
+        y= "Count", 
+        title = "Histogram of Phoenix car thefts in 2022, by grid")+ 
+  scale_y_continuous(labels = label_comma(), 
+                     limits = c(0,2500)) 
 
 ```
 
-## Small multiple scatterplot with correlations
+
+### 5. Correlation between independent variables and car theft 
 
 ```{r fig.width = 10}
 
@@ -287,23 +319,6 @@ ggplot(corr_plots,
 ```
 
 
-## Histogram of dependent variable
-
-```{r}
-
-library(scales)
-
-ggplot(final_net, 
-       aes(x= n_car_theft))+
-  geom_histogram(fill = "turquoise", col = "white")+ 
-  xlim(0, 30)+ 
-  labs( x = "Number of car thefts", 
-        y= "Count", 
-        title = "Histogram of Phoenix car thefts in 2022, by grid")+ 
-  scale_y_continuous(labels = label_comma(), 
-                     limits = c(0,2500)) 
-
-```
 
 
 ## Local Moran's I for fishnet grid cells
