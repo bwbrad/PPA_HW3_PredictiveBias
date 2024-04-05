@@ -50,11 +50,11 @@ source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-L
 ```{r load_data}
 
 
-street_posts <- st_read("https://mapping-phoenix.opendata.arcgis.com/api/download/v1/items/6f41dcc9c5f547569e4ddd35d4b83a51/geojson?layers=0") %>% 
+street_posts <- st_read("Street_Lights.geojson") %>% 
   dplyr::select(OBJECTID) %>% 
   st_transform('ESRI:103223')
 
-police_grid <- st_read("https://mapping-phoenix.opendata.arcgis.com/api/download/v1/items/5bdb7c621a6449bfb6e190e4c09a6636/geojson?layers=0") %>% 
+police_grid <- st_read("Police_Grid.geojson") %>% 
   st_transform(st_crs(street_posts))
 
 phx <- st_union(police_grid) %>% 
@@ -64,7 +64,7 @@ phx <- st_union(police_grid) %>%
 library(data.table)
 
 #load crime data
-crime_data <- read.csv("https://raw.githubusercontent.com/bwbrad/PPA_HW3_PredictiveBias/main/crime-data_crime-data_crimestat.csv")
+crime_data <- read.csv("crime-data_crime-data_crimestat.csv")
 
 #get rid of space in column names
 names(crime_data) <- gsub(x = names(crime_data), pattern = " ", replacement = "_")
