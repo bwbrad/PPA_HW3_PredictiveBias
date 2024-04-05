@@ -54,8 +54,9 @@ street_posts <- st_read("https://mapping-phoenix.opendata.arcgis.com/api/downloa
   dplyr::select(OBJECTID) %>% 
   st_transform('ESRI:103223')
 
-police_grid <- st_read("https://mapping-phoenix.opendata.arcgis.com/api/download/v1/items/5bdb7c621a6449bfb6e190e4c09a6636/geojson?layers=0") %>% 
-  st_transform(st_crs(street_posts))
+police_grid <- st_read("Data/Police_Grid/Police_Grid.shp") %>% 
+  st_transform(st_crs(street_posts)) %>% 
+  rename(GRID_NUMBER = GRID_NUMBE)
 
 phx <- st_union(police_grid) %>% 
     st_transform(st_crs(street_posts))
@@ -197,10 +198,10 @@ street_posts_grid <- police_grid_count %>%  # Start with the summarized variable
 
 ```{r extra data for final net}
 
-phx_villages <- st_read("https://maps.phoenix.gov/pub/rest/services/Public/Villages/MapServer/0/query?outFields=*&where=1%3D1&f=geojson") %>% 
+phx_villages <- st_read("Data/Villages.geojson") %>% 
   st_transform(st_crs(street_posts))
 
-police_districts <- st_read("https://maps.phoenix.gov/pub/rest/services/Public/PolicePrecincts/MapServer/0/query?outFields=*&where=1%3D1&f=geojson") %>% 
+police_districts <- st_read("Data/Police_Precincts/Police_Precincts.shp") %>% 
   st_transform(st_crs(street_posts))
 ```
 
@@ -320,9 +321,8 @@ ggplot(corr_plots,
   facet_wrap(~metric, scales = "free")+ 
   scale_y_log10()+ 
   geom_smooth(color = "black", lwd = .5)+ 
-  labs(x= "Number of car thefts")
-
-?pivot_longer()
+  labs(x= "Number of car thefts") +
+  theme(legend.position = "bottom")
 ```
 
 
@@ -543,7 +543,7 @@ tm_shape(errors_combined)+
 
 Understanding environmental prompts for specific human behaviors cannot be achieved without considering who it is that these predictions are being made for. In a society plagued by targeted policing practices, it is imperative that we study the demographic makeup of the areas we are analyzing. 
 
-The table below shows raw predictive errors by race through regression. This provides insight into the predictive performance of the car-theft regression models across different racial contexts. Such a comparison helps in assessing whether the predictive accuracy of each regression model varies across different racial contexts, and whether cross-validation impacts prediction accuracy within certain racial groups.
+The table below shows raw predictive errors by race through regression. The greatest mean prediction error, 2.73 car thefts, occurred in Census tracts with a greater share of Hispanic or Latino residents than Phoenix and a lower share of white and Black residents than Phoenix. This provides insight into the predictive performance of the car-theft regression models across different racial contexts. Such a comparison helps in assessing whether the predictive accuracy of each regression model varies across different racial contexts, and whether cross-validation impacts prediction accuracy within certain racial groups.
 
 
 ```{r}
@@ -602,17 +602,15 @@ gt(errors_by_demographics %>%
                 columns = 2:4) %>% 
   tab_spanner(label = md("**Prediction error**"),
                 columns = 5:6) %>% 
-  cols_hide(reg)
-  
+  cols_hide(reg) %>%
+  opt_stylize(style = 6, color = "gray") %>% 
+  gt_theme_538()
 ```
 
 
 ### 9. Assessing Accuracy
 
 We assessed the accuracy of the model by cross-referencing predictions made using 2022 data with actual incidents of car theft reported in 2023. Initially, we used kernel density to estimate the spatial distribution of car thefts across radii of 1000ft, 1500ft, and 2000ft. This told us the density of car theft incidents in these radii. By comparing the predictions to the actual data, we can further determine the accuracy of our predictive model. 
-
-
-
 
 ```{r}
 theft_sf <- st_as_sf(final_net) 
@@ -652,8 +650,6 @@ as.data.frame(theft_KD.1000) %>%
      mapTheme(title_size = 14)
 ```
 
-
-
 ```{r car_theft_23}
 car_theft_23 <- crime_data %>% 
   filter(UCR.CRIME.CATEGORY == "MOTOR VEHICLE THEFT" &
@@ -665,11 +661,7 @@ car_theft_23 <- crime_data %>%
   st_transform(st_crs(street_posts))
 ```
 
-
 To compare our predictive model with actual data for 2023 car thefts, we created risk categories based on the predicted risk of car theft occurrences. Low levels of risk are indicated by the "1st" category, while highest risk is indicated by the "5th" category, based on their relative magnitude.
-
-### I think I actually don't understand what is happening here
-
 
 ```{r}
 theft_KDE_sum <- as.data.frame(theft_KD.1000) %>%
@@ -693,8 +685,6 @@ theft_KDE_sf <- theft_KDE_sum %>%
   dplyr::select(label, Risk_Category, n_theft)
 ```
 
-
-
 ```{r}
 ml_breaks <- classIntervals(reg.ss.spatialCV$Prediction, 
                              n = 5, "fisher")
@@ -716,21 +706,21 @@ theft_risk_sf <-
   
 ```
 
-
-
 ```{r}
 rbind(theft_KDE_sf, theft_risk_sf) %>%
   na.omit() %>%
   gather(Variable, Value, -label, -Risk_Category, -geometry) %>%
   ggplot() +
     geom_sf(aes(fill = Risk_Category), colour = NA) +
-    geom_sf(data = sample_n(street_posts, 3000), size = .5, colour = "white", alpha = .5) +
+    geom_sf(data = sample_n(street_posts, 3000), size = .1, colour = "white", alpha = .5) +
     facet_wrap(~label, ) +
     scale_fill_viridis(discrete = TRUE) +
     labs(title="Comparison of Kernel Density and Risk Predictions",
          subtitle="2022 car theft risk predictions; 2023 car thefts") +
     mapTheme(title_size = 14)
 ```
+
+The below graph, comparing risk prediction to kernel density, demonstrates how our model overpredicted risk in the lowest two and highest risk categories, and underpredicted it in the middle two categories.
 
 ```{r}
 rbind(theft_KDE_sf, theft_risk_sf) %>%
@@ -754,7 +744,7 @@ rbind(theft_KDE_sf, theft_risk_sf) %>%
 
 ## Summary
 
-
+We would not recommend that our model to predict the number of By assessing how well our the quality of our model prediction, it's clear that there are disparities from spatial, demographic, and categorical angles. Particularly, if our model over-predicts car thefts in areas more Black or Hispanic than Phoenix as a whole, that's a major red flag and a dangerous to send law enforcement in greater numbers to these areas. Modeling crimes based on environmental characteristics, such as streetlights, is a way to bake in "broken windows" policing into a predictive model. This will only serve to exacerbate the negative impacts policing already has on Black and Brown communities in Phoenix.
 
 ## Appendix? 
 
