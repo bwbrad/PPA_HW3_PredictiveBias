@@ -35,3 +35,5 @@ tmap
 gt
 gtExtras
 data.table
+scales
+ggthemes
