@@ -1,0 +1,765 @@
+---
+title: 'Assignment 3'
+author: "Bailey Bradford, Frances Murray, Jonathan Zisk"
+date: "April 2024"
+output:
+  html_document:
+    theme: cosmo 
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    code_folding: hide
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE, warning = FALSE, results = "hide")
+```
+
+
+```{r, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(sf)
+library(RSocrata)
+library(viridis)
+library(spatstat)
+library(raster)
+library(spdep)
+library(FNN)
+library(grid)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(tidycensus)
+library(classInt) 
+library(tmap)
+library(gt)
+library(gtExtras)
+# for KDE and ML risk class intervals
+# functions
+root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
+
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+```
+
+## Read in Data from Phoenix
+
+
+```{r load_data}
+
+
+street_posts <- st_read("https://mapping-phoenix.opendata.arcgis.com/api/download/v1/items/6f41dcc9c5f547569e4ddd35d4b83a51/geojson?layers=0") %>% 
+  dplyr::select(OBJECTID) %>% 
+  st_transform('ESRI:103223')
+
+police_grid <- st_read("Data/Police_Grid/Police_Grid.shp") %>% 
+  st_transform(st_crs(street_posts)) %>% 
+  rename(GRID_NUMBER = GRID_NUMBE)
+
+phx <- st_union(police_grid) %>% 
+    st_transform(st_crs(street_posts))
+
+
+library(data.table)
+
+#load crime data
+crime_data <- read.csv("https://raw.githubusercontent.com/bwbrad/PPA_HW3_PredictiveBias/main/crime-data_crime-data_crimestat.csv")
+
+#get rid of space in column names
+names(crime_data) <- gsub(x = names(crime_data), pattern = " ", replacement = "_")
+
+#select for car theft and year 2022
+car_theft_22 <- crime_data %>% 
+  filter(UCR.CRIME.CATEGORY == "MOTOR VEHICLE THEFT" &
+    grepl("2022" , OCCURRED.ON)) 
+
+#select for drug offense and year 2022
+drug_off_2022 <- crime_data %>% 
+  filter(UCR.CRIME.CATEGORY == "DRUG OFFENSE" &
+    grepl("2022" , OCCURRED.ON)) 
+ 
+
+
+```
+## Street lamps in Phoenix:
+*How do basic features in our built environment interact with crime?*
+
+### 1. Mapping street lamps
+
+The City of Phoenix hosts a comprehensive data set that maps out the location of its over 100,000 street lamps. This is a powerful data set that indirectly shows where the City values nighttime illumination on its streets. Street lamps can serve many purposes, including for illuminating roadways and sidewalks or for providing a sense of safety on public streets. In short, street lamps are located in places where the city has prioritized infrastructure for 24-hour use. 
+
+We map Phoenix's street lamps two ways, first as a point for every lamp, then as a heatmap. There are so many streetlamps that showing them only as dots makes it difficult to assess the density of their distribution. However, as a heat map, it is clear that streetlamps are distributed densely in Downtown Phoenix, with wide coverage on adjacent streets. By comparison, on the fringe of the Downtown core, streetlamps line only major roads and arterials, leaving corridors of illumination surrounded by swaths of unlit area. 
+
+```{r  fig.height=11, results='markup'}
+
+# Street lights
+
+tm_shape(phx)+ 
+  tm_borders()+ 
+  tm_shape(street_posts)+ 
+  tm_dots(size = .0001)+ 
+  tm_layout (main.title = "Distribution of streetlamps in Phoenix")
+
+# Plot 2: Density of street lamps with contours overlaid on Phoenix boundary
+ggplot() + 
+    geom_sf(data = phx, fill = "lightgrey") +  # Add boundary with grey fill
+    stat_density2d(data = data.frame(st_coordinates(street_posts)),  # Compute 2D kernel density estimate
+                   aes(X, Y, fill = ..level.., alpha = ..level..),  # Define aesthetics for density contours
+                   size = 0.01, bins = 40, geom = 'polygon') +  # Set size and number of bins for contours
+    scale_colour_brewer(palette = "Reds") +  # Use Viridis color scale for fill
+    scale_alpha(range = c(0.00, 0.35), guide = FALSE) +  # Set transparency range for contours
+    labs(title = "Density of Street Lamps in Phoenix") +  # Set plot title
+    theme_void() + theme(legend.position = "none")  # Use a blank theme and remove legend
+
+
+```
+### 2. Examining the distribution of car theft 
+
+In this report, we aim to assess the relationship between the presence of street lamps and other forms of crime or unwanted behavior. This question gets at what can be termed environmental determinants of crime, or what factors in the built environment affect unwanted behavior in cities. 
+
+This analysis considers what the effect of streetlight placement is on car theft in Phoenix. The two factors may be related in multiple ways, including that well-illuminated areas may be less suitable for car theft, or that the political implications of street lamp placement may also have a positive or negative relationship with the likelihood of car theft in the area. 
+
+Unlike with street lamps, our data for car theft is aggregated at "police grid" fishnet level, so we don't have the exact location of car thefts. However, we are confident that the small scale of the police gird (over 2,400 cells for the City of Phoenix) allows us to generalize by cell. 
+
+See a map of car theft by grid cell below. Notice how the distribution of car theft is somewhat similar to the distribution of street lamps, however the areas with the highest number of car thefts are just outside of downtown; both in the neighborhoods of Maryvale to the east of downtown, and Alhambra to the north. 
+
+```{r, results='markup', fig.width=6, fig.height=4 }
+
+#summarize car theft by police grid
+
+car_theft_22_grid <- car_theft_22 %>% 
+  dplyr::select(c(INC.NUMBER, GRID)) %>% 
+  group_by(GRID) %>% 
+  summarise(n_car_theft = n()) 
+
+#summarize drug offense by police grid
+
+drug_off_22_grid <- drug_off_2022 %>% 
+  dplyr::select(c(INC.NUMBER, GRID)) %>% 
+  group_by(GRID) %>% 
+  summarise(n_drug_off = n()) 
+
+#Join car theft to grid 
+
+police_grid_count <- police_grid %>% 
+  st_drop_geometry() %>% 
+  left_join(car_theft_22_grid, join_by("GRID_NUMBER" == "GRID")) %>% 
+  mutate(n_car_theft = if_else(is.na(n_car_theft), 0, n_car_theft)) %>% 
+  left_join(police_grid) %>% 
+  left_join(drug_off_22_grid, join_by("GRID_NUMBER" == "GRID")) %>%
+  replace(is.na(.), 0) %>% 
+  st_as_sf()
+
+tm_shape(police_grid_count)+ 
+  tm_fill("n_car_theft", palette = "PuBuGn", style = "jenks", n= 7)+ 
+  tm_shape(phx)+ 
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Car Theft")
+
+
+
+```
+
+
+
+
+### 3. Assessing other risk factors
+
+To accompany our street lamp and car theft data, we assembled three other data points. Two are derived from street lamps data, and include the number of street lamps per grid cell and the nearest neighbor distant to 10 street lamps from the centroid of gird cells. The third data are the measure of drug offenses recorded in each grid cell. This is another version of a metric that can show relationships between the built environment and crime, but is highly susceptible to bias due to the prejudiced nature of policing and the uneven criminalization of drug use across socioeconomic classes. 
+
+```{r knn}
+
+# Aggregate street lamps to the police grid
+street_posts_count <- street_posts %>% 
+  dplyr::select(OBJECTID) %>% 
+  mutate(count_posts = 1) %>% 
+  aggregate(.,police_grid, sum)  %>% 
+  mutate(count_posts = replace_na(count_posts, 0)) 
+
+
+
+# Convenience aliases to reduce the length of function names
+st_c    <- st_coordinates  # Alias for st_coordinates function
+st_coid <- st_centroid     # Alias for st_centroid function
+
+# Create nearest neighbor (NN) relationship from abandoned cars data to fishnet grid cells
+street_posts_grid <- police_grid_count %>%  # Start with the summarized variables data
+    mutate(street_posts.nn = nn_function(  # Create a new column for nearest neighbor information
+        st_c(st_coid(police_grid_count)),  # Calculate centroids of fishnet grid cells
+        st_c(street_posts),         # Get coordinates of abandoned cars
+        k = 10                      # Number of nearest neighbors to find
+    ))
+
+```
+
+
+```{r extra data for final net}
+
+phx_villages <- st_read("Data/Villages.geojson") %>% 
+  st_transform(st_crs(street_posts))
+
+police_districts <- st_read("Data/Police_Precincts/Police_Precincts.shp") %>% 
+  st_transform(st_crs(street_posts))
+```
+
+```{r final net}
+
+final_net <-
+  st_centroid(street_posts_grid) %>%
+    st_join(phx_villages %>% 
+              dplyr::select(NAME)) %>% 
+    st_join(police_districts %>% 
+              dplyr::select(NAME)) %>% 
+      st_drop_geometry %>% 
+      left_join(police_grid %>% 
+                  dplyr::select(GRID_NUMBER, geometry)) %>% 
+      st_sf() %>% 
+  rename("VILLAGE" = NAME.x, 
+         "PRECINCT" = NAME.y) %>% 
+  st_join(street_posts_count %>% 
+              dplyr::select(count_posts)) %>% 
+  na.omit() 
+  
+```
+
+```{r vizNN}
+## Visualize the NN feature
+vars_net.long.nn <- 
+  dplyr::select(final_net, ends_with(".nn")) %>%
+    gather(Variable, value, -geometry)
+
+```
+
+```{r , results='markup', fig.height=4, fig.width=6}
+
+vars_net.long.nn <- vars_net.long.nn %>% 
+  mutate(log_val = log(value))
+
+ tm_shape(vars_net.long.nn)+ 
+  tm_fill("value", 
+          style = "log10",
+          palette = "Spectral", 
+          n= 8)+ 
+  tm_shape(phx)+ 
+  tm_borders()+   
+  tm_layout(legend.outside = TRUE, 
+            main.title = "Log Street Lamp NN")
+
+
+ tm_shape(final_net) + 
+  tm_fill("count_posts", 
+          palette = "Reds", 
+          style = "jenks", 
+          n = 7)+ 
+  tm_shape(phx)+ 
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Street Lamps")
+
+ tm_shape(final_net) + 
+  tm_fill("n_drug_off", 
+          palette = "Greens",
+          style = "fisher",
+          n = 7)+ 
+  tm_shape(phx)+ 
+  tm_borders()+ 
+    tm_layout(legend.outside = TRUE, 
+              main.title = "Count Drug Offense")
+
+
+```
+
+### 4. The distribution of car theft rates
+
+Most police grids in Phoenix did not report many car thefts in 2022, as seen in the histogram below. However, while the number of car thefts seems to be generally negatively related to the number of police grids with that count of car thefts, there are clear instances of high rates of car thefts in some police grids. While the majority of police grids saw fewer than 15 car thefts in 2022, a substantial count of police grids saw at least 15 car thefts over the same time interval. 
+
+
+```{r}
+
+library(scales)
+
+ggplot(final_net, 
+       aes(x= n_car_theft))+
+  geom_histogram(fill = "turquoise", col = "white")+ 
+  xlim(0, 30)+ 
+  labs( x = "Number of car thefts", 
+        y= "Count", 
+        title = "Histogram of Phoenix car thefts in 2022, by grid")+ 
+  scale_y_continuous(labels = label_comma(), 
+                     limits = c(0,2500)) 
+
+```
+
+
+### 5. Correlation between independent variables and car theft 
+
+Consideration of the distribution of police grids with high occurrences of car thefts begs the question of how local conditions within these police grids might be correlated with car thefts. For example, might there be a relationship between the density of street lamps and occurrences of car theft? Could police presence related to drug offences be spatially related to reported car thefts? Can we observe a relationship between the distance between lamp posts and instances of car theft?
+
+To address these questions we created scatterplots for local condition independent variables (drug offenses per grid cell, lamp post distances, and street lamps per grid cell) with the dependent variable of car theft counts. 
+
+```{r fig.width = 10}
+
+corr_plots <- final_net %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(GRID_NUMBER, n_car_theft, n_drug_off, street_posts.nn, count_posts) %>% 
+  pivot_longer(cols= c(n_drug_off, street_posts.nn, count_posts),
+               names_to = "metric", 
+               values_to = "value") %>% 
+  mutate(metric = recode(metric, "count_posts" = "Street Lamps per Grid Cell", 
+                         "n_drug_off" = "Drug Offenses per Grid Cell", 
+                         "street_posts.nn" = "Lamp Post NN distance (ft)"))
+ 
+
+ggplot(corr_plots, 
+       aes(x= n_car_theft, 
+           y= value, 
+           color = metric))+ 
+  geom_point(size = .5)+ 
+  facet_wrap(~metric, scales = "free")+ 
+  scale_y_log10()+ 
+  geom_smooth(color = "black", lwd = .5)+ 
+  labs(x= "Number of car thefts") +
+  theme(legend.position = "bottom")
+```
+
+
+
+
+### 6. Spatial analysis of car theft to identify clusters
+
+To understand the potential relationship between car theft in Phoenix and factors such as street lamp density and proximity, or the occurrence of drug offenses across different police grids, we used spatial analysis techniques to uncover any localized spatial patterns or outliers. One such technique is Local Moran's I, which assesses the degree of spatial similarity between the values of a variable and their spatial neighbors.
+
+First, a plot of the Local Moran's I statistic depicts the normalization of the spread of values with a slope greater than 1, suggesting a positive autocorrelation between independent and dependent variables.
+
+
+```{r final_net.weights}
+## generates warnings from PROJ issues
+## {spdep} to make polygon to neighborhoods... 
+final_net.nb <- poly2nb(as_Spatial(final_net), queen=TRUE)
+## ... and neighborhoods to list of weights
+final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
+
+# print(final_net.weights, zero.policy=TRUE)
+```
+
+```{r local_morans}
+local_morans <- localmoran(final_net$count_posts, final_net.weights, zero.policy=TRUE, 
+                           alternative = "two.sided") %>% 
+  as.data.frame() %>% 
+  rename(p_value = 'Pr(z != E(Ii))')
+
+### join local Moran's I results to fishnet
+mp <- moran.plot(as.vector(scale(final_net$count_posts)), final_net.weights)
+
+head(mp)
+
+final_net.localMorans <- 
+  cbind(local_morans, as.data.frame(final_net)) %>% 
+  st_sf() %>%
+  dplyr::select(n_car_theft = n_car_theft,
+                street_lamps_count = count_posts, 
+                Local_Morans_I = Ii,) %>% 
+  mutate(hot_cold_spots = case_when((mp$x >= 0 & mp$wx >= 0) & (local_morans$p_value <= 0.05) ~ 1,
+                                    (mp$x <= 0 & mp$wx <= 0) & (local_morans$p_value <= 0.05) ~ 0,
+                                    TRUE ~ NA)) %>% 
+  gather(Variable, Value, -geometry)
+
+## 
+
+```
+
+Below that, plots allow us to identify the spatial relationship calculated using Local Moran's I. Areas depicted in yellow indicate high Moran's I scores, suggesting strong spatial clustering where the values of the variable are similar to those of neighboring areas. On the other hand, dark purple areas represent outliers, indicating significant deviations from neighboring values.
+
+By examining these maps, we can identify clusters of similar values for each variable, providing insights into potential hot spots, meaning areas with high neighbor-similarity, or cold spots, meaning areas with low neighbor-similarity, in relation to car theft occurrences, street lamp distribution, proximity, and drug offense rates across different police grids within Phoenix. 
+
+
+```{r local_morans.plot, fig.width=10, fig.height=4}
+## This is just for plotting
+vars <- unique(final_net.localMorans$Variable)
+varList <- list()
+
+for(i in vars){
+  varList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(final_net.localMorans, Variable == i), 
+              aes(fill = Value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      theme_void() + theme(legend.position="bottom")}
+
+do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Streetlamps"))
+
+```
+
+# This is talking about significance but I'm not really sure what to say about it....
+
+
+
+```{r}
+# generates warning from NN
+final_net <- final_net %>% 
+  mutate(lamp.isSig = 
+           ifelse(local_morans[,5] <= 0.001, 1, 0)) %>%
+  mutate(lamp.isSig.dist = 
+           nn_function(st_c(st_coid(final_net)),
+                       st_c(st_coid(filter(final_net, 
+                                           lamp.isSig == 1))), 
+                       k = 1))
+
+```
+
+
+```{r}
+ggplot() +
+      geom_sf(data = final_net, aes(fill=lamp.isSig.dist), colour=NA) +
+      scale_fill_viridis(name="NN Distance") +
+      labs(title="Streetlamp NN Distance") +
+      theme_void()
+
+```
+
+### 7. Assessing Predictive Accuracy
+
+The following table of Mean Absolute Error (MAE) and standard deviation of MAE by regression details the accuracy of the regression model's prediction performance. Cross validation of two regressions allows us to compare predictive models for car theft in Phoenix. By considering the outcomes of the MAE and standard deviation MAE, as well as a map of model errors by cross validation, we can identify areas of high and low predictive accuracy. It appears that the model used in regression 1 produces more accurate predictions for car theft.
+
+Areas in which the models produced greater errors tend to be surrouding the downtown of Phoenix. While downtown Phoenix itself appears to experience relatively accurate predictive measures, the neighborhoods particularly to the north-west of downtown demonstrate the greatest predictive error.
+
+```{r results='hide'}
+
+# View(crossValidate)
+
+## define the variables we want
+reg.ss.vars <- c("street_posts.nn", "lamp.isSig.dist")
+
+## RUN REGRESSIONS
+reg.ss.spatialCV <- crossValidate(
+  dataset = final_net,
+  id = "VILLAGE",                           
+  dependentVariable = "n_car_theft",
+  indVariables = reg.ss.vars) %>%
+    dplyr::select(cvID = VILLAGE, n_car_theft, Prediction, geometry)
+
+
+## define the variables we want
+reg.ss.vars2 <- c("street_posts.nn", "lamp.isSig.dist", "n_drug_off")
+
+## RUN REGRESSIONS
+reg.ss.spatialCV2 <- crossValidate(
+  dataset = final_net,
+  id = "VILLAGE",                           
+  dependentVariable = "n_car_theft",
+  indVariables = reg.ss.vars2) %>%
+    dplyr::select(cvID = VILLAGE, n_car_theft, Prediction, geometry)
+
+
+
+```
+
+```{r fig.width = 8, results='markup'}
+# calculate errors by Village
+
+error_by_reg_and_fold <- 
+  reg.ss.spatialCV %>%
+  mutate(Error = Prediction - n_car_theft) %>% 
+    group_by(cvID)  %>% 
+    summarize(Mean_Error = mean(Error, na.rm = T),
+              MAE = mean(abs(Mean_Error), na.rm = T),
+              SD_MAE = sd(Error, na.rm = T)) %>%
+  ungroup() %>% 
+  mutate(reg = "Regression 1")
+
+error_by_reg_and_fold2 <- 
+  reg.ss.spatialCV2 %>%
+  mutate(Error = Prediction - n_car_theft) %>% 
+    group_by(cvID)  %>% 
+    summarize(Mean_Error = mean(Error, na.rm = T),
+              MAE = mean(abs(Mean_Error), na.rm = T),
+              SD_MAE = sd(Error, na.rm = T)) %>%
+  ungroup() %>%  
+  mutate(reg = "Regression 2")
+
+errors_combined <- rbind(error_by_reg_and_fold, error_by_reg_and_fold2)
+
+errors_combined %>% 
+  arrange(desc(MAE))
+errors_combined %>% 
+  arrange(MAE)
+
+errors_table <- errors_combined %>% 
+  st_drop_geometry() %>% 
+  pivot_wider(names_from = "reg", 
+              values_from = c("Mean_Error", "MAE", "SD_MAE"))
+
+?pivot_wider
+
+##Table
+
+errors_table %>% 
+  gt() %>% 
+  tab_spanner(columns = 2:3, 
+              label = "Mean Error") %>% 
+  tab_spanner(columns = 4:5, 
+              label = "Mean Abs. Error") %>% 
+  tab_spanner(columns = 6:7, 
+              label = "Std. Dev. Mean Abs. Error") %>% 
+  cols_label("cvID" = "Village",
+             "Mean_Error_Regression 1" = "Reg.1", 
+             "Mean_Error_Regression 2" = "Reg. 2", 
+             "MAE_Regression 1" = "Reg. 1", 
+             "MAE_Regression 2" = "Reg. 2", 
+             "SD_MAE_Regression 1" = "Reg. 1", 
+             "SD_MAE_Regression 2" = "Reg. 2") %>% 
+  fmt_number(columns = 2:7, 
+              decimals = 2) %>% 
+    cols_width(2:7 ~ px(100)) %>% 
+  opt_stylize(style = 6, color = "gray") %>% 
+  gt_theme_538()
+
+```
+
+```{r plot and map of errors, results='markup'}
+
+## plot histogram of OOF (out of fold) errors
+error_by_reg_and_fold %>%
+  ggplot(aes(MAE)) + 
+    geom_histogram(bins = 30, colour="black", fill = "#FDE725FF") +
+  scale_x_continuous() + 
+    labs(title="Distribution of MAE", subtitle = "LOGO-CV",
+         x="Mean Absolute Error", y="Count") 
+
+tm_shape(errors_combined)+ 
+  tm_polygons(fill = "Mean_Error", 
+              palette = "RdYlGn",
+              lwd = 0, n= 8)+ 
+    tm_facets(by = "reg") + 
+  tm_layout(legend.outside = TRUE, 
+            legend.outside.position	 = "right")
+```
+
+### 8. Disparities of prediction errors by race
+
+Understanding environmental prompts for specific human behaviors cannot be achieved without considering who it is that these predictions are being made for. In a society plagued by targeted policing practices, it is imperative that we study the demographic makeup of the areas we are analyzing. 
+
+The table below shows raw predictive errors by race through regression. The greatest mean prediction error, 2.73 car thefts, occurred in Census tracts with a greater share of Hispanic or Latino residents than Phoenix and a lower share of white and Black residents than Phoenix. This provides insight into the predictive performance of the car-theft regression models across different racial contexts. Such a comparison helps in assessing whether the predictive accuracy of each regression model varies across different racial contexts, and whether cross-validation impacts prediction accuracy within certain racial groups.
+
+
+```{r}
+acs_vars <- c(total_pop = "B02001_001",
+              white = "B02001_002",
+              black = "B02001_003",
+              hisp_lat = "B03001_003")
+
+acs22 <- get_acs(geography = "tract",
+                 state = "AZ",
+                 county = "Maricopa",
+                 variables = acs_vars,
+                 year = 2022,
+                 output = "wide",
+                 geometry = TRUE) %>% 
+  st_transform(st_crs(street_posts)) %>%
+  st_intersection(phx) %>% 
+  dplyr::select(-ends_with("M")) %>% 
+  rename_with(~ substr(., 1, nchar(.) - 1), all_of(ends_with("E"))) %>% 
+  mutate(pct_white = white / total_pop,
+         pct_black = black / total_pop,
+         pct_hisp_lat = hisp_lat / total_pop,
+         more_white = case_when(pct_white > mean(pct_white, na.rm = T) ~ "Yes",
+                                pct_white < mean(pct_white, na.rm = T) ~ "No"),
+         more_black = case_when(pct_black > mean(pct_black, na.rm = T) ~ "Yes",
+                                pct_black < mean(pct_black, na.rm = T) ~ "No"),
+         more_hisp_lat = case_when(pct_hisp_lat > mean(pct_hisp_lat, na.rm = T) ~ "Yes",
+                                   pct_hisp_lat < mean(pct_hisp_lat, na.rm = T) ~ "No")) %>%
+  dplyr::select(-c(white, black, hisp_lat))
+
+errors_by_demographics <- errors_combined %>% 
+  st_join(acs22 %>%
+            dplyr::select(more_white, more_black, more_hisp_lat)) %>%
+  st_drop_geometry() %>% 
+  group_by(reg, more_white, more_black, more_hisp_lat) %>% 
+  summarize(MAE = mean(abs(Mean_Error), na.rm = T),
+            SD_MAE = mean(SD_MAE, na.rm = T)) %>% 
+  ungroup()
+```
+
+```{r}
+gt(errors_by_demographics %>% 
+     filter(!is.na(more_white))) %>%
+  fmt_number(columns = c(MAE, SD_MAE), decimals = 2) %>% 
+  cols_label(more_white = "Greater % White",
+             more_black = "Greater % Black",
+             more_hisp_lat = "Greater % Hisp/Lat",
+             MAE = "Mean",
+             SD_MAE = "Standard Deviation") %>% 
+  tab_row_group(label = md("**Regression 1**"),
+                rows = reg == "Regression 1") %>% 
+  tab_row_group(label = md("**Regression 2**"),
+                rows = reg == "Regression 2") %>%
+  row_group_order(groups = c(md("**Regression 1**"), md("**Regression 2**"))) %>% 
+  tab_spanner(label = md("**Census tract relative to Phoenix**"),
+                columns = 2:4) %>% 
+  tab_spanner(label = md("**Prediction error**"),
+                columns = 5:6) %>% 
+  cols_hide(reg) %>%
+  opt_stylize(style = 6, color = "gray") %>% 
+  gt_theme_538()
+```
+
+
+### 9. Assessing Accuracy
+
+We assessed the accuracy of the model by cross-referencing predictions made using 2022 data with actual incidents of car theft reported in 2023. Initially, we used kernel density to estimate the spatial distribution of car thefts across radii of 1000ft, 1500ft, and 2000ft. This told us the density of car theft incidents in these radii. By comparing the predictions to the actual data, we can further determine the accuracy of our predictive model. 
+
+```{r}
+theft_sf <- st_as_sf(final_net) 
+
+# demo of kernel width
+theft_ppp <- as.ppp(st_coordinates(theft_sf), W = st_bbox(final_net))
+theft_KD.1000 <- density.ppp(theft_ppp, 1000)
+theft_KD.1500 <- density.ppp(theft_ppp, 1500)
+theft_KD.2000 <- density.ppp(theft_ppp, 2000)
+theft_KD.df <- rbind(
+  mutate(data.frame(rasterToPoints(mask(raster(theft_KD.1000), as(phx_villages, 'Spatial')))), Legend = "1000 Ft."),
+  mutate(data.frame(rasterToPoints(mask(raster(theft_KD.1500), as(phx_villages, 'Spatial')))), Legend = "1500 Ft."),
+  mutate(data.frame(rasterToPoints(mask(raster(theft_KD.2000), as(phx_villages, 'Spatial')))), Legend = "2000 Ft.")) 
+
+theft_KD.df$Legend <- factor(theft_KD.df$Legend, levels = c("1000 Ft.", "1500 Ft.", "2000 Ft."))
+
+ggplot(data=theft_KD.df, aes(x=x, y=y)) +
+  geom_raster(aes(fill=layer)) + 
+  facet_wrap(~Legend) +
+  coord_sf(crs=st_crs(final_net)) + 
+  scale_fill_viridis(name="Density") +
+  labs(title = "Kernel density with 3 different search radii") +
+  mapTheme(title_size = 14)
+```
+
+```{r}
+
+as.data.frame(theft_KD.1000) %>%
+  st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
+  aggregate(., final_net, mean) %>%
+   ggplot() +
+     geom_sf(aes(fill=value),
+             color = NA) +
+     geom_sf(data = sample_n(street_posts, 1500), size = .1, col = "white", alpha = 0.5) +
+     scale_fill_viridis(name = "Density") +
+     labs(title = "Kernel density of car thefts") +
+     mapTheme(title_size = 14)
+```
+
+```{r car_theft_23}
+car_theft_23 <- crime_data %>% 
+  filter(UCR.CRIME.CATEGORY == "MOTOR VEHICLE THEFT" &
+           grepl("2023", OCCURRED.ON)) %>% 
+  left_join(police_grid %>% 
+              dplyr::select(-OBJECTID),
+            by= c("GRID" = "GRID_NUMBER")) %>% 
+  st_sf() %>% 
+  st_transform(st_crs(street_posts))
+```
+
+To compare our predictive model with actual data for 2023 car thefts, we created risk categories based on the predicted risk of car theft occurrences. Low levels of risk are indicated by the "1st" category, while highest risk is indicated by the "5th" category, based on their relative magnitude.
+
+```{r}
+theft_KDE_sum <- as.data.frame(theft_KD.1000) %>%
+  st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
+  aggregate(., final_net, mean) 
+kde_breaks <- classIntervals(theft_KDE_sum$value, 
+                             n = 5, "fisher")
+theft_KDE_sf <- theft_KDE_sum %>%
+  mutate(label = "Kernel Density",
+         Risk_Category = classInt::findCols(kde_breaks),
+         Risk_Category = case_when(
+           Risk_Category == 5 ~ "5th",
+           Risk_Category == 4 ~ "4th",
+           Risk_Category == 3 ~ "3rd",
+           Risk_Category == 2 ~ "2nd",
+           Risk_Category == 1 ~ "1st")) %>% 
+  cbind(
+    aggregate(
+      dplyr::select(car_theft_23) %>% mutate(n_theft = 1), ., sum) %>%
+    mutate(n_theft = replace_na(n_theft, 0))) %>%
+  dplyr::select(label, Risk_Category, n_theft)
+```
+
+```{r}
+ml_breaks <- classIntervals(reg.ss.spatialCV$Prediction, 
+                             n = 5, "fisher")
+theft_risk_sf <-
+  reg.ss.spatialCV %>%
+  mutate(label = "Risk Predictions",
+         Risk_Category =classInt::findCols(ml_breaks),
+         Risk_Category = case_when(
+           Risk_Category == 5 ~ "5th",
+           Risk_Category == 4 ~ "4th",
+           Risk_Category == 3 ~ "3rd",
+           Risk_Category == 2 ~ "2nd",
+           Risk_Category == 1 ~ "1st")) %>%
+  cbind(
+    aggregate(
+      dplyr::select(car_theft_23) %>% mutate(n_theft = 1), ., sum) %>%
+      mutate(n_theft = replace_na(n_theft, 0))) %>%
+  dplyr::select(label,Risk_Category, n_theft)
+  
+```
+
+```{r}
+rbind(theft_KDE_sf, theft_risk_sf) %>%
+  na.omit() %>%
+  gather(Variable, Value, -label, -Risk_Category, -geometry) %>%
+  ggplot() +
+    geom_sf(aes(fill = Risk_Category), colour = NA) +
+    geom_sf(data = sample_n(street_posts, 3000), size = .1, colour = "white", alpha = .5) +
+    facet_wrap(~label, ) +
+    scale_fill_viridis(discrete = TRUE) +
+    labs(title="Comparison of Kernel Density and Risk Predictions",
+         subtitle="2022 car theft risk predictions; 2023 car thefts") +
+    mapTheme(title_size = 14)
+```
+
+The below graph, comparing risk prediction to kernel density, demonstrates how our model overpredicted risk in the lowest two and highest risk categories, and underpredicted it in the middle two categories.
+
+```{r}
+rbind(theft_KDE_sf, theft_risk_sf) %>%
+  st_drop_geometry() %>%
+  na.omit() %>%
+  gather(Variable, Value, -label, -Risk_Category) %>%
+  group_by(label, Risk_Category) %>%
+  summarize(n_theft = sum(Value)) %>%
+  ungroup() %>%
+  group_by(label) %>%
+  mutate(Pcnt_of_test_set_crimes = n_theft / sum(n_theft)) %>%
+    ggplot(aes(Risk_Category,Pcnt_of_test_set_crimes)) +
+      geom_bar(aes(fill=label), position="dodge", stat="identity") +
+      scale_fill_viridis(discrete = TRUE, name = "Model") +
+      labs(title = "Risk prediction vs. Kernel density, 2023 Car Thefts",
+           y = "% of Test Set Car Thefts (per model)",
+           x = "Risk Category") +
+  theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+```
+
+## Summary
+
+We would not recommend that our model to predict the number of car thefts in Phoenix. By assessing how well our the quality of our model prediction, it's clear that there are disparities from spatial, demographic, and categorical angles. Particularly, if our model over-predicts car thefts in areas more Black or Hispanic than Phoenix as a whole, that's a major red flag and a dangerous to send law enforcement in greater numbers to these areas. Modeling crimes based on environmental characteristics, such as streetlights, is a way to bake in "broken windows" policing into a predictive model. This will only serve to exacerbate the negative impacts policing already has on Black and Brown communities in Phoenix.
+
+## Appendix? 
+
+```{r map of street lamps in dot form, fig.height=11}
+
+# Street lights
+
+tm_shape(phx)+ 
+  tm_borders()+ 
+  tm_shape(street_posts)+ 
+  tm_dots(size = .005)+ 
+  tm_layout (main.title = "Distribution of streetlamps in Phoenix")
+
+
+
+```
+
+
