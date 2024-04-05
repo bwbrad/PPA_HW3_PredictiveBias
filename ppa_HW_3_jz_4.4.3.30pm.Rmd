@@ -45,7 +45,6 @@ source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-L
 
 ```
 
-## Read in Data from Phoenix
 
 
 ```{r load_data}
@@ -237,7 +236,6 @@ vars_net.long.nn <-
 ```{r small multiples, results='markup', fig.height=8}
 
 
-<<<<<<< Updated upstream
 vars_facet <- final_net %>% 
   select(c(count_posts, street_posts.nn, n_drug_off, GRID_NUMBER)) %>% 
   pivot_longer(cols =c(count_posts, street_posts.nn, n_drug_off), 
@@ -249,18 +247,8 @@ tm_shape(vars_facet)+
               palette = "Viridis",
               style = "quantile",
               lwd = 0, n= 5, 
-              free.scales.fill = TRUE)+ 
-    tm_facets(by = "variable", 
-              free.scales = TRUE) +
-=======
-tm_shape(vars_net.long.nn)+ 
-  tm_fill("value", 
-          style = "log10",
-          palette = "Spectral", 
-          n= 8)+ 
-  tm_shape(phx)+ 
-  tm_borders()+   
->>>>>>> Stashed changes
+              fill.free = TRUE)+ 
+    tm_facets(by = "variable", free.scales = TRUE)+
   tm_layout(legend.outside = TRUE, 
             legend.outside.position	 = "right")
 
@@ -342,6 +330,7 @@ final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
 ```
 
 ```{r local_morans}
+
 local_morans <- localmoran(final_net$count_posts, final_net.weights, zero.policy=TRUE, 
                            alternative = "two.sided") %>% 
   as.data.frame() %>% 
@@ -363,7 +352,7 @@ final_net.localMorans <-
                                     TRUE ~ NA)) %>% 
   gather(Variable, Value, -geometry)
 
-## 
+
 
 ```
 
@@ -677,8 +666,6 @@ car_theft_23 <- crime_data %>%
 
 To compare our predictive model with actual data for 2023 car thefts, we created risk categories based on the predicted risk of car theft occurrences. Low levels of risk are indicated by the "1st" category, while highest risk is indicated by the "5th" category, based on their relative magnitude.
 
-*I think I actually don't understand what is happening here*
-
 
 ```{r categories}
 theft_KDE_sum <- as.data.frame(theft_KD.1000) %>%
@@ -762,5 +749,6 @@ rbind(theft_KDE_sf, theft_risk_sf) %>%
 
 ## Summary
 
+We would not recommend that our model to predict the number of car thefts in Phoenix. By assessing how well our the quality of our model prediction, it's clear that there are disparities from spatial, demographic, and categorical angles. Particularly, if our model over-predicts car thefts in areas more Black or Hispanic than Phoenix as a whole, that's a major red flag and a dangerous to send law enforcement in greater numbers to these areas. Modeling crimes based on environmental characteristics, such as streetlights, is a way to bake "broken windows" policing into a predictive model. This will only serve to exacerbate the negative impacts policing already has on Black and Brown communities in Phoenix. In many ways, this project was an exercise in dispelling the misconception that environmental factors cause crime. Crime is a function of several things, including human behavior, policing, reporting style, and other quasi-deterministic factors. Nothing in the built environment *causes* crime, even when certain factors are found to be correlated with crime. All models on environmental determinants of crime should be used only for their observational qualities, not as predictors or explainers of crime.
 
 
