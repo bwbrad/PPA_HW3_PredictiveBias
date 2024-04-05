@@ -64,7 +64,7 @@ phx <- st_union(police_grid) %>%
 library(data.table)
 
 #load crime data
-crime_data <- read.csv("crime-data_crime-data_crimestat.csv")
+crime_data <- read.csv("https://raw.githubusercontent.com/bwbrad/PPA_HW3_PredictiveBias/main/crime-data_crime-data_crimestat.csv")
 
 #get rid of space in column names
 names(crime_data) <- gsub(x = names(crime_data), pattern = " ", replacement = "_")
@@ -89,7 +89,7 @@ drug_off_2022 <- crime_data %>%
 
 The City of Phoenix hosts a comprehensive data set that maps out the location of its over 100,000 street lamps. This is a powerful data set that indirectly shows where the City values nighttime illumination on its streets. Street lamps can serve many purposes, including for illuminating roadways and sidewalks or for providing a sense of safety on public streets. In short, street lamps are located in places where the city has prioritized infrastructure for 24-hour use. 
 
-We map Phoenix's street lamps two ways, first as a point for every lamp,and then as a heatmap. There are so many streetlamps that showing them only as dots makes it difficult to assess the density of their distribution. However, as a heat map, it is clear that streetlamps are distributed densely in Downtown Phoenix, with wide coverage on adjacent streets. By comparison, on the fringe of the Downtown core, streetlamps line only major roads and arterials, leaving corridors of illumination surrounded by swaths of on lit area. 
+We map Phoenix's street lamps two ways, first as a point for every lamp, then as a heatmap. There are so many streetlamps that showing them only as dots makes it difficult to assess the density of their distribution. However, as a heat map, it is clear that streetlamps are distributed densely in Downtown Phoenix, with wide coverage on adjacent streets. By comparison, on the fringe of the Downtown core, streetlamps line only major roads and arterials, leaving corridors of illumination surrounded by swaths of unlit area. 
 
 ```{r  fig.height=11, results='markup'}
 
@@ -118,11 +118,11 @@ ggplot() +
 
 In this report, we aim to assess the relationship between the presence of street lamps and other forms of crime or unwanted behavior. This question gets at what can be termed environmental determinants of crime, or what factors in the built environment affect unwanted behavior in cities. 
 
-This analysis considers what the effect of streetlight placement is on car theft in Phoenix. The two factors may be related in multiple ways, including that areas which are well illuminated may make the less suitable for car theft, or that the political implications of street lamps placement may also have a positive or negative relationship with the likelihood of car theft in the area. 
+This analysis considers what the effect of streetlight placement is on car theft in Phoenix. The two factors may be related in multiple ways, including that well-illuminated areas may be less suitable for car theft, or that the political implications of street lamp placement may also have a positive or negative relationship with the likelihood of car theft in the area. 
 
 Unlike with street lamps, our data for car theft is aggregated at "police grid" fishnet level, so we don't have the exact location of car thefts. However, we are confident that the small scale of the police gird (over 2,400 cells for the City of Phoenix) allows us to generalize by cell. 
 
-See a map of car theft by grid cell below. Notice how the distribution of car theft is somewhat similar to the distribution of street lamps, however the areas with the highest number of car thefts are just outside of dowtown, both in the neighbrohoods of Maryvale to the east of Downtown, and Alhambra to the north. 
+See a map of car theft by grid cell below. Notice how the distribution of car theft is somewhat similar to the distribution of street lamps, however the areas with the highest number of car thefts are just outside of downtown; both in the neighborhoods of Maryvale to the east of downtown, and Alhambra to the north. 
 
 ```{r, results='markup', fig.width=6, fig.height=4 }
 
@@ -167,7 +167,7 @@ tm_shape(police_grid_count)+
 
 ### 3. Assessing other risk factors
 
-To accompany our street lamp and car theft data, we assembled three other data points. Two are derived from street lamps data, and include the number of street lamps per grid cell and the nearest neighbor distant to 10 street lamps from the centroid of gird cells. The third data the measure of drug offenses recorded in each grid cell. This is another version of a metric that can show relationships between the built environment and crime, but is highly susceptible to bias due to the prejudiced nature of policing and the uneven criminalization of drug use across socioeconomic classes. 
+To accompany our street lamp and car theft data, we assembled three other data points. Two are derived from street lamps data, and include the number of street lamps per grid cell and the nearest neighbor distant to 10 street lamps from the centroid of gird cells. The third data are the measure of drug offenses recorded in each grid cell. This is another version of a metric that can show relationships between the built environment and crime, but is highly susceptible to bias due to the prejudiced nature of policing and the uneven criminalization of drug use across socioeconomic classes. 
 
 ```{r knn}
 
@@ -273,6 +273,9 @@ vars_net.long.nn <- vars_net.long.nn %>%
 
 ### 4. The distribution of car theft rates
 
+Most police grids in Phoenix did not report many car thefts in 2022, as seen in the histogram below. However, while the number of car thefts seems to be generally negatively related to the number of police grids with that count of car thefts, there are clear instances of high rates of car thefts in some police grids. While the majority of police grids saw fewer than 15 car thefts in 2022, a substantial count of police grids saw at least 15 car thefts over the same time interval. 
+
+
 ```{r}
 
 library(scales)
@@ -291,6 +294,10 @@ ggplot(final_net,
 
 
 ### 5. Correlation between independent variables and car theft 
+
+Consideration of the distribution of police grids with high occurrences of car thefts begs the question of how local conditions within these police grids might be correlated with car thefts. For example, might there be a relationship between the density of street lamps and occurrences of car theft? Could police presence related to drug offences be spatially related to reported car thefts? Can we observe a relationship between the distance between lamp posts and instances of car theft?
+
+To address these questions we created scatterplots for local condition independent variables (drug offenses per grid cell, lamp post distances, and street lamps per grid cell) with the dependent variable of car theft counts. 
 
 ```{r fig.width = 10}
 
@@ -321,17 +328,12 @@ ggplot(corr_plots,
 
 
 
-## Local Moran's I for fishnet grid cells
+### 6. Spatial analysis of car theft to identify clusters
 
-using {spdep} package to to build neighborhood weights and list to calculate local Moran's I.
+To understand the potential relationship between car theft in Phoenix and factors such as street lamp density and proximity, or the occurrence of drug offenses across different police grids, we used spatial analysis techniques to uncover any localized spatial patterns or outliers. One such technique is Local Moran's I, which assesses the degree of spatial similarity between the values of a variable and their spatial neighbors.
 
-Note that the code here is *different* than in the book - it has been updated to keep up with changes in packages.
+First, a plot of the Local Moran's I statistic depicts the normalization of the spread of values with a slope greater than 1, suggesting a positive autocorrelation between independent and dependent variables.
 
-> What is the difference between local and global Moran's I?
-
-A little in depth version of the chunk below can be found:
-
-Mendez C. (2020). Spatial autocorrelation analysis in R. R Studio/RPubs. Available at <https://rpubs.com/quarcs-lab/spatial-autocorrelation>
 
 ```{r final_net.weights}
 ## generates warnings from PROJ issues
@@ -369,11 +371,10 @@ final_net.localMorans <-
 
 ```
 
-### Plotting local Moran's I results
+Below that, plots allow us to identify the spatial relationship calculated using Local Moran's I. Areas depicted in yellow indicate high Moran's I scores, suggesting strong spatial clustering where the values of the variable are similar to those of neighboring areas. On the other hand, dark purple areas represent outliers, indicating significant deviations from neighboring values.
 
-This is a complex code chunk - it's a loop which builds ggplots of local Moran's for each of your `vars`
+By examining these maps, we can identify clusters of similar values for each variable, providing insights into potential hot spots, meaning areas with high neighbor-similarity, or cold spots, meaning areas with low neighbor-similarity, in relation to car theft occurrences, street lamp distribution, proximity, and drug offense rates across different police grids within Phoenix. 
 
-> What does a significant hot spot tell us about the distribution of burglaries?
 
 ```{r local_morans.plot, fig.width=10, fig.height=4}
 ## This is just for plotting
@@ -393,9 +394,9 @@ do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Stre
 
 ```
 
-## Distance to Hot spot
+# This is talking about significance but I'm not really sure what to say about it....
 
-Using NN distance to a hot spot location
+
 
 ```{r}
 # generates warning from NN
@@ -408,12 +409,8 @@ final_net <- final_net %>%
                                            lamp.isSig == 1))), 
                        k = 1))
 
-## What does k = 1 represent?
 ```
 
-> What does `k = 1` above mean in terms of measuring nearest neighbors?
-
-### Plot NN distance to hot spot
 
 ```{r}
 ggplot() +
@@ -424,9 +421,11 @@ ggplot() +
 
 ```
 
-## Modeling and CV
+### 7. Assessing Predictive Accuracy
 
-Leave One Group Out CV on spatial features
+The following table of Mean Absolute Error (MAE) and standard deviation of MAE by regression details the accuracy of the regression model's prediction performance. Cross validation of two regressions allows us to compare predictive models for car theft in Phoenix. By considering the outcomes of the MAE and standard deviation MAE, as well as a map of model errors by cross validation, we can identify areas of high and low predictive accuracy. It appears that the model used in regression 1 produces more accurate predictions for car theft.
+
+Areas in which the models produced greater errors tend to be surrouding the downtown of Phoenix. While downtown Phoenix itself appears to experience relatively accurate predictive measures, the neighborhoods particularly to the north-west of downtown demonstrate the greatest predictive error.
 
 ```{r results='hide'}
 
@@ -540,7 +539,12 @@ tm_shape(errors_combined)+
             legend.outside.position	 = "right")
 ```
 
-### Disparities of prediction errors by race
+### 8. Disparities of prediction errors by race
+
+Understanding environmental prompts for specific human behaviors cannot be achieved without considering who it is that these predictions are being made for. In a society plagued by targeted policing practices, it is imperative that we study the demographic makeup of the areas we are analyzing. 
+
+The table below shows raw predictive errors by race through regression. This provides insight into the predictive performance of the car-theft regression models across different racial contexts. Such a comparison helps in assessing whether the predictive accuracy of each regression model varies across different racial contexts, and whether cross-validation impacts prediction accuracy within certain racial groups.
+
 
 ```{r}
 acs_vars <- c(total_pop = "B02001_001",
@@ -603,11 +607,11 @@ gt(errors_by_demographics %>%
 ```
 
 
-## Density vs predictions
+### 9. Assessing Accuracy
 
-The `spatstat` function gets us kernal density estimates with varying search radii.
+We assessed the accuracy of the model by cross-referencing predictions made using 2022 data with actual incidents of car theft reported in 2023. Initially, we used kernel density to estimate the spatial distribution of car thefts across radii of 1000ft, 1500ft, and 2000ft. This told us the density of car theft incidents in these radii. By comparing the predictions to the actual data, we can further determine the accuracy of our predictive model. 
 
-Note that the code here is *different* than in the book - it has been updated to keep up with changes in packages.
+
 
 
 ```{r}
@@ -648,9 +652,7 @@ as.data.frame(theft_KD.1000) %>%
      mapTheme(title_size = 14)
 ```
 
-## Get 2018 crime data
 
-Let's see how our model performed relative to KD on the following year's data.
 
 ```{r car_theft_23}
 car_theft_23 <- crime_data %>% 
@@ -663,6 +665,10 @@ car_theft_23 <- crime_data %>%
   st_transform(st_crs(street_posts))
 ```
 
+
+To compare our predictive model with actual data for 2023 car thefts, we created risk categories based on the predicted risk of car theft occurrences. Low levels of risk are indicated by the "1st" category, while highest risk is indicated by the "5th" category, based on their relative magnitude.
+
+### I think I actually don't understand what is happening here
 
 
 ```{r}
@@ -710,7 +716,7 @@ theft_risk_sf <-
   
 ```
 
-We don't do quite as well because we don't have very many features, but still pretty good.
+
 
 ```{r}
 rbind(theft_KDE_sf, theft_risk_sf) %>%
@@ -746,6 +752,10 @@ rbind(theft_KDE_sf, theft_risk_sf) %>%
       theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
 ```
 
+## Summary
+
+
+
 ## Appendix? 
 
 ```{r map of street lamps in dot form, fig.height=11}
@@ -762,21 +772,4 @@ tm_shape(phx)+
 
 ```
 
-
-## Junk don't keep 
-
-```{r eval=FALSE}
-
-library(mapview)
-
-mapview(final_net, zcol = "PRECINCT", palette = "Spectral")
-
-street_posts_count <- street_posts %>% 
-  st_join(police_grid, join = st_within) %>% 
-  group_by(GRID_NUMBER) %>% 
-  summarise(count = n()) %>% 
-  st_drop_geometry() %>%
-  rename("n_lamps" = count)
-
-```
 
